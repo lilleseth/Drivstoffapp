@@ -120,7 +120,7 @@ function renderSetup(error = '', values = null) {
         <div class="field stack"><label for="s-repo">Repo (eier/navn)</label>
           <input id="s-repo" required placeholder="brukernavn/drivstoff-data" value="${esc(prev.repo)}" autocapitalize="off" spellcheck="false"></div>
         <div class="field stack"><label for="s-profile">Profil</label>
-          <input id="s-profile" required placeholder="f.eks. Elias" value="${esc(prev.profile || '')}"></div>
+          <input id="s-profile" required placeholder="f.eks. Ola" value="${esc(prev.profile || '')}"></div>
         <div class="field stack"><label for="s-token">GitHub-token</label>
           <input id="s-token" required type="password" placeholder="github_pat_…" autocapitalize="off" spellcheck="false"></div>
       </div>
@@ -137,7 +137,7 @@ function renderSetup(error = '', values = null) {
     const profile = $app.querySelector('#s-profile').value.trim();
     const token = $app.querySelector('#s-token').value.trim();
     const values = { repo: repoText, profile };
-    if (!owner || !repo) return renderSetup('Skriv repoet som eier/navn, f.eks. lilleseth/drivstoff-data.', values);
+    if (!owner || !repo) return renderSetup('Skriv repoet som eier/navn, f.eks. brukernavn/drivstoff-data.', values);
 
     overlay('Kobler til GitHub …');
     try {

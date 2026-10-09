@@ -90,6 +90,13 @@ test('æøå etter tall gir ikke falske liter', () => {
   assert.equal(r.totalPrice, 500);
 });
 
+test('OCR som leser «l» som «1»', () => {
+  const r = parseReceipt('Circle K\n30,00 1 x 21,67 kr/l\nMVA 25% 130,02');
+  assert.equal(r.liters, 30);
+  assert.equal(r.pricePerLiter, 21.67);
+  assert.equal(r.totalPrice, 650.1);
+});
+
 test('ugyldig dato ignoreres', () => {
   assert.equal(parseReceipt('Dato 31.02.2026').date, null);
 });

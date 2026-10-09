@@ -1,6 +1,6 @@
 // Service worker: gjør at appen åpner seg uten nett. Data synkroniseres når du er på nett igjen.
 // Appfiler hentes fra nettet først (så oppdateringer kommer med en gang), med cache som reserve.
-const CACHE = 'drivstoff-v1';
+const CACHE = 'drivstoff-v2';
 const SHELL = [
   './', 'index.html', 'style.css', 'manifest.webmanifest',
   'js/app.js', 'js/store.js', 'js/github.js', 'js/merge.js', 'js/receipt-parser.js', 'js/scan.js', 'js/stats.js',
@@ -21,8 +21,8 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.hostname === 'api.github.com') return;
 
-  // Biblioteker og språkdata fra CDN endres aldri for en gitt versjon: cache først.
-  if (url.hostname.endsWith('jsdelivr.net') || url.hostname.endsWith('projectnaptha.com')) {
+  // Biblioteker og språkdata (store filer som aldri endres): cache først, lastes ved første bruk.
+  if (url.origin === self.location.origin && url.pathname.includes('/vendor/')) {
     e.respondWith(caches.match(e.request).then((hit) => hit || fetch(e.request).then((res) => {
       if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); }
       return res;

@@ -85,10 +85,15 @@ function findLiters(lines) {
   // "Liter: 42,31", "Volum 42,31", "Antall 42,31 l"
   const prefix = String.raw`(?:liter|ltr|volum|mengde|antall|ant\.?)\s*:?\s*(${DECIMAL})`;
 
-  for (const line of lines) {
-    for (const value of captures(suffix, line)) {
-      const v = parseNumber(value);
-      if (inRange(v, LITERS_RANGE)) return v;
+  // OCR leser ofte «l» som «1», «i» eller «|»: "30,00 1 x 21,67 kr/l".
+  const misread = String.raw`(${DECIMAL})\s*[1i|]\s*[x×*]\s*${DECIMAL}`;
+
+  for (const pattern of [suffix, misread]) {
+    for (const line of lines) {
+      for (const value of captures(pattern, line)) {
+        const v = parseNumber(value);
+        if (inRange(v, LITERS_RANGE)) return v;
+      }
     }
   }
   for (const line of lines) {

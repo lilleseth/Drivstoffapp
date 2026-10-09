@@ -1,8 +1,10 @@
 // Bildebehandling, tekstgjenkjenning (Tesseract.js) og PDF-generering (jsPDF).
-// Bibliotekene lastes først når de trengs, så appen starter raskt.
+// Alle biblioteker og språkdata ligger i appen selv (docs/vendor), så bildene leses lokalt
+// på telefonen og ingenting sendes til tredjeparter. De lastes først når de trengs.
 
-const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
-const JSPDF_URL = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
+const vendor = (path) => new URL(`../vendor/${path}`, import.meta.url).href;
+const TESSERACT_URL = vendor('tesseract/tesseract.min.js');
+const JSPDF_URL = vendor('jspdf/jspdf.umd.min.js');
 
 const scripts = new Map();
 function loadScript(src) {
@@ -65,6 +67,11 @@ async function getWorker(onProgress) {
   await loadScript(TESSERACT_URL);
   if (!workerPromise) {
     workerPromise = window.Tesseract.createWorker(['nor', 'eng'], 1, {
+      workerPath: vendor('tesseract/worker.min.js'),
+      corePath: vendor('tesseract/core'),
+      langPath: vendor('tesseract/lang'),
+      workerBlobURL: false,
+      gzip: true,
       logger: (m) => {
         if (m.status === 'recognizing text') onProgress?.(`Leser tekst … ${Math.round(m.progress * 100)} %`);
         else if (m.status?.includes('loading')) onProgress?.('Laster tekstgjenkjenning (første gang tar litt tid) …');

@@ -29,6 +29,17 @@ og lastes opp automatisk når du er på nett igjen. Bruker du appen på flere en
 og fyller ut liter, beløp, drivstoff, dato og stasjon. Første gang lastes ca. 10 MB språkdata ned. Bildet lagres som PDF.
 Hold kvitteringen flatt og rett, med godt lys, for best resultat.
 
+**Personvern:** Koden i dette repoet kan være offentlig – den inneholder ingen personopplysninger.
+Alle dine data ligger i ditt eget *private* data-repo.
+- Appen kontakter bare seg selv og `api.github.com`. Ingen analyse, sporing, annonser eller CDN-er
+  (håndheves med Content-Security-Policy). Tekstgjenkjenning og språkdata ligger i `docs/vendor/` og kjører lokalt
+  på telefonen – kvitteringsbilder sendes ikke til noen tjeneste.
+- Bilder lagres på nytt som PDF, så EXIF-data (bl.a. GPS-posisjon) fra kamerabildet blir ikke med.
+- GitHub-tokenet lagres bare i nettleseren på enheten din og sendes kun til GitHub. Bruk en fine-grained token som kun
+  gjelder data-repoet, med kortest mulig utløpstid du er komfortabel med. «Logg ut» fjerner det fra enheten.
+- Siden er merket `noindex` og sender ingen referrer.
+- Advarsel vises hvis du prøver å koble til et offentlig data-repo.
+
 **Publisering:** Mappen `docs/` er en statisk nettside uten byggesteg, f.eks. via GitHub Pages
 (*Settings → Pages → Deploy from a branch → main / docs*).
 
