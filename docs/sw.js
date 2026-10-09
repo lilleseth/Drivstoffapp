@@ -1,6 +1,6 @@
 // Service worker: gjør at appen åpner seg uten nett. Data synkroniseres når du er på nett igjen.
 // Appfiler hentes fra nettet først (så oppdateringer kommer med en gang), med cache som reserve.
-const CACHE = 'drivstoff-v3';
+const CACHE = 'drivstoff-v4';
 const SHELL = [
   './', 'index.html', 'style.css', 'manifest.webmanifest',
   'js/app.js', 'js/store.js', 'js/github.js', 'js/merge.js', 'js/receipt-parser.js', 'js/scan.js', 'js/stats.js',

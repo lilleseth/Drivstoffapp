@@ -46,8 +46,9 @@ async function idb(mode, fn) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction('pendingReceipts', mode);
-    const result = fn(tx.objectStore('pendingReceipts'));
-    tx.oncomplete = () => resolve(result.result ?? result);
+    const request = fn(tx.objectStore('pendingReceipts'));
+    // NB: request.result er undefined når get() ikke finner noe – det må returneres som det er.
+    tx.oncomplete = () => resolve(request.result);
     tx.onerror = () => reject(tx.error);
   });
 }
@@ -133,7 +134,7 @@ export class Store extends EventTarget {
   /** Henter en kvittering – fra lokal kø hvis den ikke er lastet opp ennå, ellers fra GitHub. */
   async getReceipt(path) {
     const pending = await idb('readonly', (s) => s.get(path));
-    if (pending) return new Blob([pending.bytes], { type: 'application/pdf' });
+    if (pending?.bytes) return new Blob([pending.bytes], { type: 'application/pdf' });
     const blob = await this.client.getRaw(path);
     return new Blob([blob], { type: 'application/pdf' });
   }

@@ -133,3 +133,36 @@ async function makePdf(canvases) {
   doc.setProperties({ title: 'Kvittering', creator: 'Drivstoffapp' });
   return doc.output('blob');
 }
+
+// MARK: Visning av PDF
+
+const PDFJS_URL = vendor('pdfjs/pdf.min.js');
+
+/**
+ * Tegner alle sidene i en PDF som bilder i `container`. Brukes i stedet for nettleserens
+ * innebygde PDF-viser, som er upålitelig i Safari på iPhone (særlig fra Hjem-skjermen).
+ */
+export async function renderPdf(blob, container) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  if (String.fromCharCode(...bytes.subarray(0, 5)) !== '%PDF-') {
+    throw new Error('Filen er ikke en gyldig PDF');
+  }
+  await loadScript(PDFJS_URL);
+  const pdfjs = window.pdfjsLib;
+  pdfjs.GlobalWorkerOptions.workerSrc = vendor('pdfjs/pdf.worker.min.js');
+  const doc = await pdfjs.getDocument({ data: bytes, isEvalSupported: false }).promise;
+  const cssWidth = Math.max(280, container.clientWidth || 360);
+  // Høy oppløsning så teksten er skarp når man zoomer, men innenfor iOS sin grense for canvas.
+  const pixelWidth = Math.min(2000, Math.round(cssWidth * Math.min(3, (window.devicePixelRatio || 1) * 1.5)));
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i);
+    const viewport = page.getViewport({ scale: pixelWidth / page.getViewport({ scale: 1 }).width });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(viewport.width);
+    canvas.height = Math.round(viewport.height);
+    canvas.className = 'pdf-page';
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    container.append(canvas);
+  }
+  return doc.numPages;
+}

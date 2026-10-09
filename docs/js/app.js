@@ -1,7 +1,7 @@
 import { loadConfig, saveConfig, clearConfig, Store, slugify, listProfiles } from './store.js';
 import { GitHubClient } from './github.js';
 import { parseReceipt, parseNumber } from './receipt-parser.js';
-import { processReceiptFiles } from './scan.js';
+import { processReceiptFiles, renderPdf } from './scan.js';
 import { computeStats, monthlyCost, estimateOdometers, measuredConsumption, hasOdometer } from './stats.js';
 
 // MARK: Hjelpere
@@ -599,8 +599,9 @@ async function openReceipt(source, title) {
     }
     overlay(null);
   }
-  const url = URL.createObjectURL(blob);
   const fileName = `${title.replace(/[^\p{L}\d -]/gu, '')}.pdf`;
+  const file = new File([blob], fileName, { type: 'application/pdf' });
+  const url = URL.createObjectURL(file);
   const viewer = document.createElement('div');
   viewer.className = 'sheet';
   viewer.style.zIndex = 25;
@@ -608,14 +609,23 @@ async function openReceipt(source, title) {
     <div class="sheet-head"><button class="link" data-x>Lukk</button><h2>Kvittering</h2>
       <button class="link" data-share>Del</button></div>
     <div class="sheet-body">
-      <iframe class="pdf-frame" src="${url}" title="Kvittering"></iframe>
-      <a class="btn secondary" style="margin-top:12px" href="${url}" target="_blank" rel="noopener" download="${esc(fileName)}">Åpne / last ned PDF</a>
+      <div class="pdf-pages"><div class="note info">Laster kvittering …</div></div>
+      <button class="btn secondary" data-share style="margin-top:12px">Del / lagre i Filer</button>
+      <a class="btn secondary" style="margin-top:10px" href="${url}" target="_blank" rel="noopener" download="${esc(fileName)}">Last ned PDF</a>
     </div>`;
   document.body.append(viewer);
+
+  const pages = viewer.querySelector('.pdf-pages');
+  renderPdf(blob, pages)
+    .then(() => pages.querySelector('.note')?.remove())
+    .catch((e) => {
+      pages.innerHTML = `<div class="note error">Kunne ikke vise kvitteringen: ${esc(e.message)}.
+        Prøv «Del / lagre i Filer» for å åpne den i en annen app.</div>`;
+    });
+
   viewer.addEventListener('click', async (e) => {
     if (e.target.closest('[data-x]')) { viewer.remove(); URL.revokeObjectURL(url); }
     if (e.target.closest('[data-share]')) {
-      const file = new File([blob], fileName, { type: 'application/pdf' });
       if (navigator.canShare?.({ files: [file] })) {
         try { await navigator.share({ files: [file], title }); } catch { /* avbrutt */ }
       } else {

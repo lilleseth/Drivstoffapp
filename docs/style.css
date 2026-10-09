@@ -216,7 +216,8 @@ details.ocr pre { white-space: pre-wrap; font-size: 12px; margin: 8px 0 0; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.pdf-frame { width: 100%; height: calc(100vh - 160px); border: 0; background: #fff; border-radius: 12px; }
+.pdf-pages { display: flex; flex-direction: column; gap: 12px; }
+.pdf-pages .pdf-page { width: 100%; height: auto; background: #fff; border-radius: 8px; box-shadow: var(--shadow); }
 
 /* Statistikk */
 .chart { display: flex; align-items: flex-end; gap: 4px; height: 150px; padding: 16px 12px 4px; }
