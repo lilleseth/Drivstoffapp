@@ -1,5 +1,42 @@
 # Drivstoffapp
 
+Oversikt over drivstoffutgifter for flere biler. Finnes i to varianter:
+
+- **Web-app** (`docs/`) – fungerer på iPhone uten Mac. Data lagres i ditt eget GitHub-repo. Se under.
+- **Native iPhone-app** (`Drivstoffapp/`, SwiftUI) – krever Mac med Xcode. Se «iPhone-app (Xcode)».
+
+## Web-app
+
+Åpnes i Safari og legges til på Hjem-skjermen («Del» → «Legg til på Hjem-skjerm»), så oppfører den seg som en app.
+
+**Lagring:** Alt lagres i et GitHub-repo du velger, under en profil:
+
+```
+profiler/<profil>/data.json                       biler og fyllinger
+profiler/<profil>/kvitteringer/<år>/<dato>-<id>.pdf  kvitteringer
+```
+
+Hver endring blir en commit, så hele historikken tas vare på. Endringer gjort uten dekning lagres på telefonen
+og lastes opp automatisk når du er på nett igjen. Bruker du appen på flere enheter, slås endringene sammen.
+
+**Første gang:**
+1. Lag et **privat** repo til dataene, f.eks. `drivstoff-data`.
+2. Lag en [fine-grained token](https://github.com/settings/personal-access-tokens/new) med tilgang kun til
+   data-repoet og *Contents: Read and write*.
+3. Åpne appen, skriv inn repo, profilnavn og token. Tokenet lagres bare på enheten.
+
+**Skanning:** Ta bilde av kvitteringen (eller velg et bilde/PDF). Tekstgjenkjenning (Tesseract.js) kjører i nettleseren
+og fyller ut liter, beløp, drivstoff, dato og stasjon. Første gang lastes ca. 10 MB språkdata ned. Bildet lagres som PDF.
+Hold kvitteringen flatt og rett, med godt lys, for best resultat.
+
+**Publisering:** Mappen `docs/` er en statisk nettside uten byggesteg, f.eks. via GitHub Pages
+(*Settings → Pages → Deploy from a branch → main / docs*).
+
+**Utvikling:** `npm test` kjører testene for kvitteringstolking, statistikk og sammenslåing.
+`npm start` starter en lokal server på http://localhost:8000.
+
+## iPhone-app (Xcode)
+
 iPhone-app (SwiftUI + SwiftData) for å holde oversikt over drivstoffutgifter for flere biler.
 
 ## Funksjoner
