@@ -29,6 +29,10 @@ og lastes opp automatisk når du er på nett igjen. Bruker du appen på flere en
 og fyller ut liter, beløp, drivstoff, dato og stasjon. Første gang lastes ca. 10 MB språkdata ned. Bildet lagres som PDF.
 Hold kvitteringen flatt og rett, med godt lys, for best resultat.
 
+**Km-stand er valgfri.** Mangler den (eller er satt til 0/1), estimeres kjørelengde og km-stand ut fra forbruket:
+målt forbruk fra fyllingene som har km-stand, eller *forventet forbruk* (l/mil) som du kan legge inn på bilen.
+Estimerte verdier vises med «≈».
+
 **Personvern:** Koden i dette repoet kan være offentlig – den inneholder ingen personopplysninger.
 Alle dine data ligger i ditt eget *private* data-repo.
 - Appen kontakter bare seg selv og `api.github.com`. Ingen analyse, sporing, annonser eller CDN-er

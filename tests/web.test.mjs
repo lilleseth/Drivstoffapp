@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseReceipt, parseNumber } from '../docs/js/receipt-parser.js';
-import { computeStats, monthlyCost } from '../docs/js/stats.js';
+import { computeStats, monthlyCost, estimateOdometers, hasOdometer } from '../docs/js/stats.js';
 import { mergeData } from '../docs/js/merge.js';
 
 test('Circle K diesel', () => {
@@ -166,4 +166,64 @@ test('sammenslåing velger nyeste versjon og beholder slettinger', () => {
   assert.equal(byId.f1.total, 100);
   assert.equal(byId.f2.deleted, true);
   assert.equal(byId.f3.total, 300);
+});
+
+test('km-stand 1 og tom regnes som ukjent', () => {
+  assert.equal(hasOdometer({ odometer: 1 }), false);
+  assert.equal(hasOdometer({ odometer: null }), false);
+  assert.equal(hasOdometer({}), false);
+  assert.equal(hasOdometer({ odometer: 45000 }), true);
+});
+
+test('fylling uten km-stand mellom to kjente teller med i forbruket', () => {
+  const s = computeStats([
+    { date: '2026-01-01T12:00', odometer: 1000, liters: 40, total: 800 },
+    { date: '2026-01-10T12:00', odometer: 1, liters: 35, total: 700 },
+    { date: '2026-01-20T12:00', odometer: 2000, liters: 30, total: 600 },
+  ]);
+  assert.equal(s.basis, 'measured');
+  assert.equal(s.distance, 1000);
+  assert.ok(Math.abs(s.litersPerMil - 0.65) < 1e-9);
+});
+
+test('fyllinger etter siste kjente km-stand gir estimert ekstra kjørelengde', () => {
+  const s = computeStats([
+    { date: '2026-01-01T12:00', odometer: 1000, liters: 40, total: 800 },
+    { date: '2026-01-10T12:00', odometer: 1500, liters: 50, total: 1000 }, // 1 l/mil
+    { date: '2026-01-20T12:00', odometer: null, liters: 30, total: 600 },
+  ]);
+  assert.equal(s.litersPerMil, 1);
+  assert.equal(s.distance, 800);
+  assert.equal(s.distanceIncludesEstimate, true);
+});
+
+test('uten km-stand brukes forventet forbruk fra bilen', () => {
+  const fills = [
+    { date: '2026-01-01T12:00', liters: 40, total: 800 },
+    { date: '2026-01-10T12:00', liters: 30, total: 600 },
+    { date: '2026-01-20T12:00', liters: 30, total: 600 },
+  ];
+  assert.equal(computeStats(fills).litersPerMil, null);
+  const s = computeStats(fills, { expectedLitersPerMil: 0.6 });
+  assert.equal(s.basis, 'expected');
+  assert.equal(s.distance, 1000);
+  assert.ok(Math.abs(s.costPerKm - 1.2) < 1e-9);
+});
+
+test('estimerer km-stand fremover og bakover', () => {
+  const m = estimateOdometers([
+    { id: 'a', date: '2026-01-01T12:00', odometer: 1, liters: 40 },
+    { id: 'b', date: '2026-01-10T12:00', odometer: 10000, liters: 50 },
+    { id: 'c', date: '2026-01-20T12:00', odometer: null, liters: 30 },
+    { id: 'd', date: '2026-01-30T12:00', odometer: null, liters: 20 },
+  ], 0.5); // 20 km per liter
+  assert.deepEqual(m.get('a'), { odometer: 9000, estimated: true, kmSincePrevious: null, kmEstimated: false });
+  assert.deepEqual(m.get('b'), { odometer: 10000, estimated: false, kmSincePrevious: 1000, kmEstimated: true });
+  assert.deepEqual(m.get('c'), { odometer: 10600, estimated: true, kmSincePrevious: 600, kmEstimated: true });
+  assert.equal(m.get('d').odometer, 11000);
+});
+
+test('uten forbruk kan km-stand ikke estimeres', () => {
+  const m = estimateOdometers([{ id: 'a', date: '2026-01-01T12:00', liters: 40 }], null);
+  assert.equal(m.get('a').odometer, null);
 });

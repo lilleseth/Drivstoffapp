@@ -2,7 +2,7 @@ import { loadConfig, saveConfig, clearConfig, Store, slugify, listProfiles } fro
 import { GitHubClient } from './github.js';
 import { parseReceipt, parseNumber } from './receipt-parser.js';
 import { processReceiptFiles } from './scan.js';
-import { computeStats, monthlyCost } from './stats.js';
+import { computeStats, monthlyCost, estimateOdometers, measuredConsumption, hasOdometer } from './stats.js';
 
 // MARK: Hjelpere
 
@@ -32,6 +32,26 @@ const nowLocal = () => {
 };
 const carName = (car) => (car ? (car.plate ? `${car.name} (${car.plate})` : car.name) : 'Slettet bil');
 const sum = (list, key) => list.reduce((s, x) => s + (x[key] || 0), 0);
+
+/** Forbruket som brukes til estimater: målt fra km-stand hvis mulig, ellers bilens forventede forbruk. */
+function consumptionFor(carId, fills = store.fillUps.filter((f) => f.carId === carId)) {
+  const measured = measuredConsumption(fills);
+  if (measured) return { litersPerMil: measured.litersPerMil, basis: 'målt' };
+  const expected = store.cars.find((c) => c.id === carId)?.expectedLitersPerMil;
+  return expected > 0 ? { litersPerMil: expected, basis: 'forventet' } : null;
+}
+
+/** Km-stand (kjent eller estimert) for alle fyllinger, per bil. */
+function odometerInfo() {
+  const info = new Map();
+  for (const car of store.cars) {
+    const fills = store.fillUps.filter((f) => f.carId === car.id);
+    for (const [id, v] of estimateOdometers(fills, consumptionFor(car.id, fills)?.litersPerMil)) info.set(id, v);
+  }
+  return info;
+}
+
+const kmText = (v) => (v?.odometer == null ? '' : `${v.estimated ? '≈ ' : ''}${fmt.km(v.odometer)}`);
 
 const ICONS = {
   fills: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 3h8a2 2 0 0 1 2 2v6h1a2 2 0 0 1 2 2v4a1 1 0 0 0 2 0V9.4l-2.7-2.7 1.4-1.4 3 3c.2.2.3.4.3.7V17a3 3 0 0 1-6 0v-4h-1v7h1v2H2v-2h1V5a2 2 0 0 1 2-2Zm0 2v5h8V5H5Z"/></svg>',
@@ -214,6 +234,7 @@ function renderFills() {
       <button class="btn" data-action="new-car">Legg til bil</button></div>`;
   }
   const carById = Object.fromEntries(cars.map((c) => [c.id, c]));
+  const odo = odometerInfo();
   const list = store.fillUps
     .filter((f) => !ui.carFilter || f.carId === ui.carFilter)
     .sort((a, b) => b.date.localeCompare(a.date));
@@ -243,7 +264,7 @@ function renderFills() {
           <span class="badge ${f.fuel}">⛽︎</span>
           <span class="grow">
             <div class="title">${fmt.date(f.date)} ${f.receipt ? '<span class="muted small">📄</span>' : ''}</div>
-            <div class="sub">${cars.length > 1 && !ui.carFilter ? `${esc(carName(carById[f.carId]))} · ` : ''}${fmt.l(f.liters)} · ${FUEL[f.fuel] || ''} · ${fmt.km(f.odometer)}</div>
+            <div class="sub">${cars.length > 1 && !ui.carFilter ? `${esc(carName(carById[f.carId]))} · ` : ''}${[fmt.l(f.liters), FUEL[f.fuel], kmText(odo.get(f.id))].filter(Boolean).join(' · ')}</div>
           </span>
           <span class="right">
             <div class="title num">${fmt.kr(f.total)}</div>
@@ -271,18 +292,23 @@ function renderCars() {
     <button class="btn secondary" data-action="new-car">＋ Legg til bil</button>`;
 }
 
-function statsSection(title, fills, showConsumption) {
-  const s = computeStats(fills);
+function statsSection(title, fills, showConsumption, car = null) {
+  const s = computeStats(fills, { expectedLitersPerMil: car?.expectedLitersPerMil });
+  const approx = s.distanceIncludesEstimate ? '≈ ' : '';
   return `<div class="section-title">${esc(title)}</div><div class="card">
     <div class="kv"><span>Totalt brukt</span><span>${fmt.kr(s.totalCost)}</span></div>
     <div class="kv"><span>Liter totalt</span><span>${fmt.l(s.totalLiters)}</span></div>
     <div class="kv"><span>Antall fyllinger</span><span>${s.count}</span></div>
     ${s.averagePricePerLiter != null ? `<div class="kv"><span>Snitt literpris</span><span>${fmt.ppl(s.averagePricePerLiter)}</span></div>` : ''}
     ${showConsumption && s.distance != null ? `
-      <div class="kv"><span>Kjørt</span><span>${fmt.km(s.distance)}</span></div>
-      <div class="kv"><span>Forbruk</span><span>${dec2.format(s.litersPerMil)} l/mil</span></div>
-      <div class="kv"><span>Drivstoff per km</span><span>${dec2.format(s.costPerKm)} kr</span></div>` : ''}
-  </div>`;
+      <div class="kv"><span>Kjørt</span><span>${approx}${fmt.km(s.distance)}</span></div>
+      <div class="kv"><span>Forbruk${s.basis === 'expected' ? ' (forventet)' : ''}</span><span>${dec2.format(s.litersPerMil)} l/mil</span></div>
+      <div class="kv"><span>Drivstoff per km</span><span>${approx}${dec2.format(s.costPerKm)} kr</span></div>` : ''}
+    ${showConsumption && s.distance == null && s.count >= 2 ? `
+      <div class="note info">Forbruk og kjørelengde vises når minst to fyllinger har km-stand – eller legg inn
+        forventet forbruk på bilen under «Biler», så estimeres det.</div>` : ''}
+  </div>
+  ${showConsumption && approx ? `<div class="section-foot">≈ er estimert ut fra ${s.basis === 'expected' ? 'forventet' : 'målt'} forbruk der km-stand mangler.</div>` : ''}`;
 }
 
 function renderStats() {
@@ -300,10 +326,10 @@ function renderStats() {
   let sections;
   if (ui.statsCar || cars.length === 1) {
     const car = cars.find((c) => c.id === (ui.statsCar || cars[0].id));
-    sections = statsSection(carName(car), selected, true);
+    sections = statsSection(carName(car), selected, true, car);
   } else {
     sections = statsSection('Alle biler', all, false)
-      + cars.map((c) => statsSection(carName(c), all.filter((f) => f.carId === c.id), true)).join('');
+      + cars.map((c) => statsSection(carName(c), all.filter((f) => f.carId === c.id), true, c)).join('');
   }
 
   return `
@@ -347,7 +373,7 @@ function renderSettings() {
 
 function previousFill(carId, date, excludeId) {
   return store.fillUps
-    .filter((f) => f.carId === carId && f.id !== excludeId && f.date <= date)
+    .filter((f) => f.carId === carId && f.id !== excludeId && f.date <= date && hasOdometer(f))
     .sort((a, b) => b.date.localeCompare(a.date))[0];
 }
 
@@ -392,7 +418,7 @@ function openFillSheet(existing) {
 
       <div class="section-title">Kilometerstand</div>
       <div class="card">
-        <div class="field"><label for="f-odo">Km-stand</label><input id="f-odo" inputmode="numeric" placeholder="km" value="${f.odometer ?? ''}"></div>
+        <div class="field"><label for="f-odo">Km-stand</label><input id="f-odo" inputmode="numeric" placeholder="Valgfritt" value="${hasOdometer(f) ? f.odometer : ''}"></div>
         <div class="note info" id="f-odo-note"></div>
       </div>
 
@@ -430,17 +456,31 @@ function openFillSheet(existing) {
     const prev = previousFill($('#f-car').value, $('#f-date').value, f.id);
     const note = $('#f-odo-note');
     note.className = 'note info';
-    if (prev && odo && odo <= prev.odometer) {
+    if (prev && odo > 1 && odo <= prev.odometer) {
       note.className = 'note warn';
       note.textContent = `⚠︎ Lavere enn forrige fylling (${fmt.km(prev.odometer)}).`;
-    } else if (prev && odo) {
+    } else if (prev && odo > 1) {
       note.textContent = `${fmt.km(odo - prev.odometer)} siden forrige fylling.`;
-    } else if (prev) {
-      note.textContent = `Forrige fylling: ${fmt.km(prev.odometer)}.`;
-    } else {
+    } else if (odo > 1) {
       note.textContent = 'Kilometerstanden står ikke på kvitteringen – les av i bilen.';
+    } else {
+      // Ingen km-stand: vis estimat ut fra forbruket.
+      const carId = $('#f-car').value;
+      const others = store.fillUps.filter((x) => x.carId === carId && x.id !== f.id);
+      const consumption = consumptionFor(carId, others);
+      const current = { id: '__current', date: $('#f-date').value || nowLocal(), liters: liters || 0, odometer: null };
+      const est = consumption && estimateOdometers([...others, current], consumption.litersPerMil).get('__current');
+      if (est?.odometer != null) {
+        note.textContent = `Valgfritt. Estimert km-stand ${kmText(est)} (ut fra ${consumption.basis} forbruk ${dec2.format(consumption.litersPerMil)} l/mil).`;
+      } else if (consumption && liters > 0) {
+        note.textContent = `Valgfritt. Denne tanken tilsvarer ca. ${fmt.km(Math.round((liters * 10) / consumption.litersPerMil))} (${consumption.basis} forbruk).`;
+      } else if (prev) {
+        note.textContent = `Valgfritt. Forrige kjente km-stand: ${fmt.km(prev.odometer)}.`;
+      } else {
+        note.textContent = 'Valgfritt. Uten km-stand estimeres kjørelengden når forbruket er kjent – legg gjerne inn forventet forbruk på bilen.';
+      }
     }
-    const ok = $('#f-car').value && liters > 0 && total > 0 && odo > 0;
+    const ok = $('#f-car').value && liters > 0 && total > 0;
     $('#f-save').disabled = !ok;
   }
 
@@ -490,7 +530,7 @@ function openFillSheet(existing) {
       date: $('#f-date').value || nowLocal(),
       liters: parseNumber($('#f-liters').value),
       total: parseNumber($('#f-total').value),
-      odometer: parseInt($('#f-odo').value.replace(/\D/g, ''), 10),
+      odometer: (() => { const v = parseInt($('#f-odo').value.replace(/\D/g, ''), 10); return v > 1 ? v : null; })(),
       station: $('#f-station').value.trim(),
       notes: $('#f-notes').value.trim(),
     };
@@ -604,6 +644,12 @@ function openCarSheet(existing) {
       <div class="section-title">Standard drivstoff</div>
       <div class="card">${segmented('cfuel', car.fuel)}</div>
       <div class="section-foot">Velges automatisk når du registrerer en fylling på denne bilen.</div>
+      <div class="section-title">Forventet forbruk</div>
+      <div class="card">
+        <div class="field"><label for="c-lpm">Liter per mil</label><input id="c-lpm" inputmode="decimal" placeholder="Valgfritt, f.eks. 0,6" value="${fmt.input(car.expectedLitersPerMil)}"></div>
+      </div>
+      <div class="section-foot">Brukes til å estimere kjørelengde når km-stand mangler, til appen har nok km-stander til å måle forbruket selv.
+        Vanlig blandet kjøring er ca. 0,5–0,8 l/mil for personbiler.</div>
       ${existing ? '<button class="btn danger" id="c-delete">Slett bil</button>' : ''}
     </div>`);
   const $ = (sel) => sheet.querySelector(sel);
@@ -619,6 +665,8 @@ function openCarSheet(existing) {
     if (t.id === 'c-save') {
       car.name = $('#c-name').value.trim();
       car.plate = $('#c-plate').value.trim().toUpperCase();
+      const lpm = parseNumber($('#c-lpm').value);
+      car.expectedLitersPerMil = lpm > 0 && lpm < 10 ? lpm : null;
       store.upsert('cars', car, `${existing ? 'Endret' : 'Ny'} bil: ${car.name}`);
       closeSheet();
       toast('Bil lagret');
@@ -658,11 +706,12 @@ function exportCsv() {
   const cars = Object.fromEntries(store.data.cars.map((c) => [c.id, c]));
   const n = (v) => (v == null ? '' : String(v).replace('.', ','));
   const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const rows = [['Dato', 'Bil', 'Reg.nr.', 'Drivstoff', 'Liter', 'Totalpris', 'Literpris', 'Km-stand', 'Stasjon', 'Notat', 'Kvittering']];
+  const odo = odometerInfo();
+  const rows = [['Dato', 'Bil', 'Reg.nr.', 'Drivstoff', 'Liter', 'Totalpris', 'Literpris', 'Km-stand', 'Km-stand (estimert)', 'Stasjon', 'Notat', 'Kvittering']];
   for (const f of [...store.fillUps].sort((a, b) => a.date.localeCompare(b.date))) {
     const c = cars[f.carId];
     rows.push([f.date.replace('T', ' '), c?.name, c?.plate, FUEL[f.fuel], n(f.liters), n(f.total),
-      n(f.liters > 0 ? Math.round((f.total / f.liters) * 100) / 100 : ''), f.odometer, f.station, f.notes, f.receipt || '']);
+      n(f.liters > 0 ? Math.round((f.total / f.liters) * 100) / 100 : ''), hasOdometer(f) ? f.odometer : '', odo.get(f.id)?.estimated ? odo.get(f.id).odometer : '', f.station, f.notes, f.receipt || '']);
   }
   const csv = '﻿' + rows.map((r) => r.map(q).join(';')).join('\r\n');
   const file = new File([csv], `drivstoff-${slugify(store.config.profile)}.csv`, { type: 'text/csv' });
