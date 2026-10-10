@@ -2,7 +2,7 @@ import { loadConfig, saveConfig, clearConfig, Store, slugify, listProfiles } fro
 import { GitHubClient } from './github.js';
 import { parseReceipt, parseNumber } from './receipt-parser.js';
 import { processReceiptFiles, renderPdf } from './scan.js';
-import { computeStats, monthlyCost, estimateOdometers, measuredConsumption, hasOdometer } from './stats.js';
+import { computeStats, monthlyCost, estimateOdometers, measuredConsumption, hasOdometer, segmentConsumption } from './stats.js';
 
 // MARK: Hjelpere
 
@@ -31,6 +31,10 @@ const nowLocal = () => {
   return d.toISOString().slice(0, 16);
 };
 const carName = (car) => (car ? (car.plate ? `${car.name} (${car.plate})` : car.name) : 'Slettet bil');
+// Nyeste først; ved likt tidspunkt avgjør km-stand og så registreringstidspunkt.
+const newestFirst = (a, b) => b.date.localeCompare(a.date)
+  || (hasOdometer(b) && hasOdometer(a) ? b.odometer - a.odometer : 0)
+  || (b.createdAt || 0) - (a.createdAt || 0);
 const sum = (list, key) => list.reduce((s, x) => s + (x[key] || 0), 0);
 
 /** Forbruket som brukes til estimater: målt fra km-stand hvis mulig, ellers bilens forventede forbruk. */
@@ -49,6 +53,32 @@ function odometerInfo() {
     for (const [id, v] of estimateOdometers(fills, consumptionFor(car.id, fills)?.litersPerMil)) info.set(id, v);
   }
   return info;
+}
+
+/** Forbruk mellom hver fylling og forrige fylling på samme bil. */
+function segmentInfo() {
+  const info = new Map();
+  for (const car of store.cars) {
+    const fills = store.fillUps.filter((f) => f.carId === car.id);
+    const avg = consumptionFor(car.id, fills);
+    for (const [id, seg] of segmentConsumption(fills, avg?.litersPerMil)) {
+      // Sammenlign med bilens snitt: mer enn 10 % over/under markeres.
+      const ratio = avg?.basis === 'målt' && seg.measured ? seg.litersPerMil / avg.litersPerMil : 1;
+      info.set(id, { ...seg, trend: ratio > 1.1 ? 'high' : ratio < 0.9 ? 'low' : '' });
+    }
+  }
+  return info;
+}
+
+function segmentText(seg) {
+  const parts = [
+    `${seg.kmEstimated ? '≈ ' : ''}${fmt.km(seg.km)}`,
+    `${seg.measured ? '' : '≈ '}${dec2.format(seg.litersPerMil)} l/mil`,
+  ];
+  if (seg.costPerMil != null) parts.push(`${seg.measured ? '' : '≈ '}${dec2.format(seg.costPerMil)} kr/mil`);
+  if (seg.spanFills > 1) parts.push(`snitt over ${seg.spanFills} fyllinger`);
+  if (!seg.measured) parts.push('estimert');
+  return parts.join(' · ');
 }
 
 const kmText = (v) => (v?.odometer == null ? '' : `${v.estimated ? '≈ ' : ''}${fmt.km(v.odometer)}`);
@@ -235,9 +265,10 @@ function renderFills() {
   }
   const carById = Object.fromEntries(cars.map((c) => [c.id, c]));
   const odo = odometerInfo();
+  const segments = segmentInfo();
   const list = store.fillUps
     .filter((f) => !ui.carFilter || f.carId === ui.carFilter)
-    .sort((a, b) => b.date.localeCompare(a.date));
+    .sort(newestFirst);
 
   const filter = cars.length > 1 ? `
     <div class="card"><div class="field"><label for="car-filter">Bil</label>
@@ -259,18 +290,25 @@ function renderFills() {
       <div><div class="label">Fyllinger</div><div class="value num">${list.length}</div></div>
     </div>
     <div class="card">
-      ${list.map((f) => `
+      ${list.map((f) => {
+        const seg = segments.get(f.id);
+        const segHtml = seg ? `<span class="trend ${seg.trend}">${seg.trend === 'high' ? '▲' : seg.trend === 'low' ? '▼' : '⇣'}</span> ${esc(segmentText(seg))}` : '';
+        const singleCar = cars.length === 1 || ui.carFilter;
+        return `
         <button class="row" data-action="edit-fill" data-id="${f.id}">
           <span class="badge ${f.fuel}">⛽︎</span>
           <span class="grow">
             <div class="title">${fmt.date(f.date)} ${f.receipt ? '<span class="muted small">📄</span>' : ''}</div>
             <div class="sub">${cars.length > 1 && !ui.carFilter ? `${esc(carName(carById[f.carId]))} · ` : ''}${[fmt.l(f.liters), FUEL[f.fuel], kmText(odo.get(f.id))].filter(Boolean).join(' · ')}</div>
+            ${seg && !singleCar ? `<div class="sub seg-inline">${segHtml}</div>` : ''}
           </span>
           <span class="right">
             <div class="title num">${fmt.kr(f.total)}</div>
             <div class="sub num">${f.liters > 0 ? fmt.ppl(f.total / f.liters) : ''}</div>
           </span>
-        </button>`).join('')}
+        </button>
+        ${seg && singleCar ? `<div class="segment num">${segHtml}</div>` : ''}`;
+      }).join('')}
     </div>`;
 }
 
@@ -374,7 +412,7 @@ function renderSettings() {
 function previousFill(carId, date, excludeId) {
   return store.fillUps
     .filter((f) => f.carId === carId && f.id !== excludeId && f.date <= date && hasOdometer(f))
-    .sort((a, b) => b.date.localeCompare(a.date))[0];
+    .sort(newestFirst)[0];
 }
 
 function openFillSheet(existing) {

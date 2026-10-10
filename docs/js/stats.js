@@ -6,7 +6,9 @@
 /** Km-stand regnes som ukjent hvis den mangler eller er en plassholder som 0 eller 1. */
 export const hasOdometer = (f) => Number.isFinite(f?.odometer) && f.odometer > 1;
 
-const byDate = (a, b) => a.date.localeCompare(b.date) || (a.odometer || 0) - (b.odometer || 0);
+const byDate = (a, b) => a.date.localeCompare(b.date)
+  || (hasOdometer(a) && hasOdometer(b) ? a.odometer - b.odometer : 0)
+  || (a.createdAt || 0) - (b.createdAt || 0);
 
 /**
  * Målt forbruk mellom første og siste fylling med kjent km-stand.
@@ -123,6 +125,62 @@ export function estimateOdometers(fillUps, litersPerMil) {
     }
     result.set(f.id, { odometer: odo[i], estimated: estimated[i], kmSincePrevious, kmEstimated });
   });
+  return result;
+}
+
+/**
+ * Forbruk mellom hver fylling og den forrige (for én bil).
+ *
+ * Literne fylt ved en fylling tilsvarer drivstoffet brukt siden forrige fylling. Mellom to fyllinger
+ * med kjent km-stand er forbruket målt. Fyllinger uten km-stand imellom får snittet for hele
+ * strekningen mellom de kjente km-standene. Utenfor kjente km-stander brukes `fallbackLitersPerMil`
+ * (målt totalforbruk eller bilens forventede forbruk) som estimat.
+ *
+ * @returns {Map<string, {km:number, kmEstimated:boolean, litersPerMil:number, costPerMil:number,
+ *   measured:boolean, spanFills:number}>} nøkkel = id til den seneste fyllingen i strekningen
+ */
+export function segmentConsumption(fillUps, fallbackLitersPerMil = null) {
+  const sorted = [...fillUps].sort(byDate);
+  const result = new Map();
+  const known = sorted.map((f, i) => (hasOdometer(f) ? i : -1)).filter((i) => i >= 0);
+
+  // Målte strekninger mellom to kjente km-stander.
+  for (let k = 1; k < known.length; k++) {
+    const a = known[k - 1];
+    const b = known[k];
+    const km = sorted[b].odometer - sorted[a].odometer;
+    if (km <= 0) continue;
+    const part = sorted.slice(a + 1, b + 1);
+    const liters = part.reduce((s, f) => s + f.liters, 0);
+    const cost = part.reduce((s, f) => s + f.total, 0);
+    const litersPerMil = (liters / km) * 10;
+    for (const f of part) {
+      result.set(f.id, {
+        km: part.length === 1 ? km : Math.round((f.liters * 10) / litersPerMil),
+        kmEstimated: part.length > 1,
+        litersPerMil,
+        costPerMil: (cost / km) * 10,
+        measured: true,
+        spanFills: part.length,
+      });
+    }
+  }
+
+  // Resten (før første / etter siste kjente km-stand): estimat ut fra snittforbruket.
+  if (fallbackLitersPerMil > 0) {
+    sorted.forEach((f, i) => {
+      if (i === 0 || result.has(f.id)) return;
+      const km = Math.round((f.liters * 10) / fallbackLitersPerMil);
+      result.set(f.id, {
+        km,
+        kmEstimated: true,
+        litersPerMil: fallbackLitersPerMil,
+        costPerMil: km > 0 ? (f.total / km) * 10 : null,
+        measured: false,
+        spanFills: 1,
+      });
+    });
+  }
   return result;
 }
 

@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseReceipt, parseNumber } from '../docs/js/receipt-parser.js';
-import { computeStats, monthlyCost, estimateOdometers, hasOdometer } from '../docs/js/stats.js';
+import { computeStats, monthlyCost, estimateOdometers, hasOdometer, segmentConsumption } from '../docs/js/stats.js';
 import { mergeData } from '../docs/js/merge.js';
 
 test('Circle K diesel', () => {
@@ -226,4 +226,34 @@ test('estimerer km-stand fremover og bakover', () => {
 test('uten forbruk kan km-stand ikke estimeres', () => {
   const m = estimateOdometers([{ id: 'a', date: '2026-01-01T12:00', liters: 40 }], null);
   assert.equal(m.get('a').odometer, null);
+});
+
+test('forbruk mellom hver fylling', () => {
+  const m = segmentConsumption([
+    { id: 'a', date: '2026-01-01T12:00', odometer: 1000, liters: 40, total: 800 },
+    { id: 'b', date: '2026-01-10T12:00', odometer: 1500, liters: 30, total: 600 }, // 0,6 l/mil
+    { id: 'c', date: '2026-01-20T12:00', odometer: null, liters: 20, total: 400 },
+    { id: 'd', date: '2026-01-30T12:00', odometer: 2300, liters: 30, total: 600 }, // c+d: 50 l / 800 km
+    { id: 'e', date: '2026-02-05T12:00', odometer: 1, liters: 25, total: 500 },
+  ], 0.5);
+  assert.equal(m.has('a'), false);
+  const b = m.get('b');
+  assert.equal(b.km, 500);
+  assert.equal(b.kmEstimated, false);
+  assert.ok(Math.abs(b.litersPerMil - 0.6) < 1e-9);
+  assert.ok(Math.abs(b.costPerMil - 12) < 1e-9);
+  assert.equal(m.get('c').spanFills, 2);
+  assert.ok(Math.abs(m.get('c').litersPerMil - 0.625) < 1e-9);
+  assert.equal(m.get('c').km, 320);
+  assert.equal(m.get('d').km, 480);
+  assert.equal(m.get('d').kmEstimated, true);
+  assert.deepEqual(m.get('e'), { km: 500, kmEstimated: true, litersPerMil: 0.5, costPerMil: 10, measured: false, spanFills: 1 });
+});
+
+test('uten km-stand og uten forventet forbruk gis ingen strekninger', () => {
+  const m = segmentConsumption([
+    { id: 'a', date: '2026-01-01T12:00', liters: 40, total: 800 },
+    { id: 'b', date: '2026-01-10T12:00', liters: 30, total: 600 },
+  ]);
+  assert.equal(m.size, 0);
 });
