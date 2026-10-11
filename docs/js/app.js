@@ -2,7 +2,7 @@ import { loadConfig, saveConfig, clearConfig, Store, slugify, listProfiles } fro
 import { GitHubClient } from './github.js';
 import { parseReceipt, parseNumber } from './receipt-parser.js';
 import { processReceiptFiles, renderPdf } from './scan.js';
-import { computeStats, monthlyCost, estimateOdometers, measuredConsumption, hasOdometer, segmentConsumption } from './stats.js';
+import { computeStats, monthlyCost, estimateOdometers, measuredConsumption, hasOdometer, segmentConsumption, isFull } from './stats.js';
 
 // MARK: Hjelpere
 
@@ -63,7 +63,7 @@ function segmentInfo() {
     const avg = consumptionFor(car.id, fills);
     for (const [id, seg] of segmentConsumption(fills, avg?.litersPerMil)) {
       // Sammenlign med bilens snitt: mer enn 10 % over/under markeres.
-      const ratio = avg?.basis === 'målt' && seg.measured ? seg.litersPerMil / avg.litersPerMil : 1;
+      const ratio = avg?.basis === 'målt' && seg.kind === 'measured' ? seg.litersPerMil / avg.litersPerMil : 1;
       info.set(id, { ...seg, trend: ratio > 1.1 ? 'high' : ratio < 0.9 ? 'low' : '' });
     }
   }
@@ -71,15 +71,22 @@ function segmentInfo() {
 }
 
 function segmentText(seg) {
+  if (seg.kind === 'partial') {
+    return [seg.km != null ? fmt.km(seg.km) : null, 'delfylling – forbruket regnes med ved neste fulle tank']
+      .filter(Boolean).join(' · ');
+  }
+  const approx = seg.kind === 'measured' ? '' : '≈ ';
   const parts = [
     `${seg.kmEstimated ? '≈ ' : ''}${fmt.km(seg.km)}`,
-    `${seg.measured ? '' : '≈ '}${dec2.format(seg.litersPerMil)} l/mil`,
+    `${approx}${dec2.format(seg.litersPerMil)} l/mil`,
   ];
-  if (seg.costPerMil != null) parts.push(`${seg.measured ? '' : '≈ '}${dec2.format(seg.costPerMil)} kr/mil`);
-  if (seg.spanFills > 1) parts.push(`snitt over ${seg.spanFills} fyllinger`);
-  if (!seg.measured) parts.push('estimert');
+  if (seg.costPerMil != null) parts.push(`${approx}${dec2.format(seg.costPerMil)} kr/mil`);
+  if (seg.spanFills > 1) parts.push(`snitt over ${seg.spanFills} fyllinger${seg.includesPartial ? ' inkl. delfylling' : ''}`);
+  if (seg.kind === 'estimated') parts.push('estimert');
   return parts.join(' · ');
 }
+
+const segmentIcon = (seg) => (seg.kind === 'partial' ? '½' : seg.trend === 'high' ? '▲' : seg.trend === 'low' ? '▼' : '⇣');
 
 const kmText = (v) => (v?.odometer == null ? '' : `${v.estimated ? '≈ ' : ''}${fmt.km(v.odometer)}`);
 
@@ -292,14 +299,14 @@ function renderFills() {
     <div class="card">
       ${list.map((f) => {
         const seg = segments.get(f.id);
-        const segHtml = seg ? `<span class="trend ${seg.trend}">${seg.trend === 'high' ? '▲' : seg.trend === 'low' ? '▼' : '⇣'}</span> ${esc(segmentText(seg))}` : '';
+        const segHtml = seg ? `<span class="trend ${seg.trend}">${segmentIcon(seg)}</span> ${esc(segmentText(seg))}` : '';
         const singleCar = cars.length === 1 || ui.carFilter;
         return `
         <button class="row" data-action="edit-fill" data-id="${f.id}">
           <span class="badge ${f.fuel}">⛽︎</span>
           <span class="grow">
             <div class="title">${fmt.date(f.date)} ${f.receipt ? '<span class="muted small">📄</span>' : ''}</div>
-            <div class="sub">${cars.length > 1 && !ui.carFilter ? `${esc(carName(carById[f.carId]))} · ` : ''}${[fmt.l(f.liters), FUEL[f.fuel], kmText(odo.get(f.id))].filter(Boolean).join(' · ')}</div>
+            <div class="sub">${cars.length > 1 && !ui.carFilter ? `${esc(carName(carById[f.carId]))} · ` : ''}${[fmt.l(f.liters) + (isFull(f) ? '' : ' (delfylling)'), FUEL[f.fuel], kmText(odo.get(f.id))].filter(Boolean).join(' · ')}</div>
             ${seg && !singleCar ? `<div class="sub seg-inline">${segHtml}</div>` : ''}
           </span>
           <span class="right">
@@ -452,7 +459,11 @@ function openFillSheet(existing) {
         <div class="field"><label for="f-liters">Antall liter</label><input id="f-liters" inputmode="decimal" placeholder="0,00" value="${fmt.input(f.liters)}"></div>
         <div class="field"><label for="f-total">Totalpris (kr)</label><input id="f-total" inputmode="decimal" placeholder="0,00" value="${fmt.input(f.total)}"></div>
         <div class="field"><label>Literpris</label><span class="value num" id="f-ppl">–</span></div>
+        <div class="field"><label for="f-full">Full tank</label><input id="f-full" type="checkbox" switch class="switch" ${isFull(f) ? 'checked' : ''}></div>
+        <div class="note info hidden" id="f-liters-note"></div>
       </div>
+      <div class="section-foot">Slå av «Full tank» hvis du ikke fylte helt opp. Forbruket regnes da sammen med neste fulle tank,
+        siden literne du fylte ikke tilsvarer det du har brukt.</div>
 
       <div class="section-title">Kilometerstand</div>
       <div class="card">
@@ -489,6 +500,18 @@ function openFillSheet(existing) {
     const liters = parseNumber($('#f-liters').value);
     const total = parseNumber($('#f-total').value);
     $('#f-ppl').textContent = liters > 0 && total > 0 ? fmt.ppl(total / liters) : '–';
+
+    // Sjekk mot tankstørrelsen hvis den er lagt inn på bilen.
+    const tank = cars.find((c) => c.id === $('#f-car').value)?.tankSize;
+    const litersNote = $('#f-liters-note');
+    let litersMsg = '';
+    if (tank > 0 && liters > tank * 1.05) {
+      litersMsg = `⚠︎ Mer enn tanken rommer (${fmt.l(tank)}) – sjekk antall liter.`;
+    } else if (tank > 0 && liters > 0 && liters < tank * 0.25 && $('#f-full').checked) {
+      litersMsg = `Lite for en full tank (${fmt.l(tank)}). Var det en delfylling? Slå i så fall av «Full tank».`;
+    }
+    litersNote.textContent = litersMsg;
+    litersNote.className = `note ${litersMsg.startsWith('⚠') ? 'warn' : 'info'}${litersMsg ? '' : ' hidden'}`;
 
     const odo = parseInt($('#f-odo').value.replace(/\D/g, ''), 10);
     const prev = previousFill($('#f-car').value, $('#f-date').value, f.id);
@@ -567,6 +590,7 @@ function openFillSheet(existing) {
       carId: car.id,
       date: $('#f-date').value || nowLocal(),
       liters: parseNumber($('#f-liters').value),
+      full: $('#f-full').checked,
       total: parseNumber($('#f-total').value),
       odometer: (() => { const v = parseInt($('#f-odo').value.replace(/\D/g, ''), 10); return v > 1 ? v : null; })(),
       station: $('#f-station').value.trim(),
@@ -688,7 +712,9 @@ function openCarSheet(existing) {
       <div class="card">
         <div class="field"><label for="c-name">Navn</label><input id="c-name" value="${esc(car.name)}" placeholder="f.eks. VW Golf"></div>
         <div class="field"><label for="c-plate">Reg.nr.</label><input id="c-plate" value="${esc(car.plate)}" placeholder="AB 12345" autocapitalize="characters"></div>
+        <div class="field"><label for="c-tank">Tankstørrelse</label><input id="c-tank" inputmode="decimal" placeholder="Valgfritt, liter" value="${fmt.input(car.tankSize)}"></div>
       </div>
+      <div class="section-foot">Tankstørrelsen brukes til å varsle hvis du fyller mer enn tanken rommer, eller lite for en full tank.</div>
       <div class="section-title">Standard drivstoff</div>
       <div class="card">${segmented('cfuel', car.fuel)}</div>
       <div class="section-foot">Velges automatisk når du registrerer en fylling på denne bilen.</div>
@@ -715,6 +741,8 @@ function openCarSheet(existing) {
       car.plate = $('#c-plate').value.trim().toUpperCase();
       const lpm = parseNumber($('#c-lpm').value);
       car.expectedLitersPerMil = lpm > 0 && lpm < 10 ? lpm : null;
+      const tank = parseNumber($('#c-tank').value);
+      car.tankSize = tank > 0 && tank < 1000 ? tank : null;
       store.upsert('cars', car, `${existing ? 'Endret' : 'Ny'} bil: ${car.name}`);
       closeSheet();
       toast('Bil lagret');
@@ -755,10 +783,10 @@ function exportCsv() {
   const n = (v) => (v == null ? '' : String(v).replace('.', ','));
   const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const odo = odometerInfo();
-  const rows = [['Dato', 'Bil', 'Reg.nr.', 'Drivstoff', 'Liter', 'Totalpris', 'Literpris', 'Km-stand', 'Km-stand (estimert)', 'Stasjon', 'Notat', 'Kvittering']];
+  const rows = [['Dato', 'Bil', 'Reg.nr.', 'Drivstoff', 'Liter', 'Full tank', 'Totalpris', 'Literpris', 'Km-stand', 'Km-stand (estimert)', 'Stasjon', 'Notat', 'Kvittering']];
   for (const f of [...store.fillUps].sort((a, b) => a.date.localeCompare(b.date))) {
     const c = cars[f.carId];
-    rows.push([f.date.replace('T', ' '), c?.name, c?.plate, FUEL[f.fuel], n(f.liters), n(f.total),
+    rows.push([f.date.replace('T', ' '), c?.name, c?.plate, FUEL[f.fuel], n(f.liters), isFull(f) ? 'Ja' : 'Nei', n(f.total),
       n(f.liters > 0 ? Math.round((f.total / f.liters) * 100) / 100 : ''), hasOdometer(f) ? f.odometer : '', odo.get(f.id)?.estimated ? odo.get(f.id).odometer : '', f.station, f.notes, f.receipt || '']);
   }
   const csv = '﻿' + rows.map((r) => r.map(q).join(';')).join('\r\n');

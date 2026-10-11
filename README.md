@@ -33,6 +33,9 @@ Hold kvitteringen flatt og rett, med godt lys, for best resultat.
 målt forbruk fra fyllingene som har km-stand, eller *forventet forbruk* (l/mil) som du kan legge inn på bilen.
 Estimerte verdier vises med «≈».
 
+**Full tank-metoden:** Forbruk måles mellom to fyllinger der tanken ble fylt helt opp. Slå av «Full tank» ved
+delfylling – literne legges da sammen med neste fulle tank. Valgfri tankstørrelse på bilen gir varsel ved urimelige verdier.
+
 **Personvern:** Koden i dette repoet kan være offentlig – den inneholder ingen personopplysninger.
 Alle dine data ligger i ditt eget *private* data-repo.
 - Appen kontakter bare seg selv og `api.github.com`. Ingen analyse, sporing, annonser eller CDN-er

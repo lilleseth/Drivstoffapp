@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseReceipt, parseNumber } from '../docs/js/receipt-parser.js';
-import { computeStats, monthlyCost, estimateOdometers, hasOdometer, segmentConsumption } from '../docs/js/stats.js';
+import { computeStats, monthlyCost, estimateOdometers, hasOdometer, segmentConsumption, measuredConsumption } from '../docs/js/stats.js';
 import { mergeData } from '../docs/js/merge.js';
 
 test('Circle K diesel', () => {
@@ -247,7 +247,9 @@ test('forbruk mellom hver fylling', () => {
   assert.equal(m.get('c').km, 320);
   assert.equal(m.get('d').km, 480);
   assert.equal(m.get('d').kmEstimated, true);
-  assert.deepEqual(m.get('e'), { km: 500, kmEstimated: true, litersPerMil: 0.5, costPerMil: 10, measured: false, spanFills: 1 });
+  assert.equal(m.get('b').kind, 'measured');
+  assert.deepEqual(m.get('e'), { kind: 'estimated', km: 500, kmEstimated: true, litersPerMil: 0.5, costPerMil: 10,
+    spanFills: 1, includesPartial: false });
 });
 
 test('uten km-stand og uten forventet forbruk gis ingen strekninger', () => {
@@ -256,4 +258,43 @@ test('uten km-stand og uten forventet forbruk gis ingen strekninger', () => {
     { id: 'b', date: '2026-01-10T12:00', liters: 30, total: 600 },
   ]);
   assert.equal(m.size, 0);
+});
+
+test('delfylling: 20 l etter 90 km gir ikke eget forbruk', () => {
+  const fills = [
+    { id: 'a', date: '2026-01-01T12:00', odometer: 10000, liters: 45, total: 900 },
+    { id: 'b', date: '2026-01-05T12:00', odometer: 10090, liters: 20, total: 400, full: false },
+    { id: 'c', date: '2026-01-12T12:00', odometer: 10700, liters: 22, total: 440 },
+  ];
+  const m = segmentConsumption(fills);
+  assert.deepEqual(m.get('b'), { kind: 'partial', km: 90, kmEstimated: false, litersPerMil: null, costPerMil: null,
+    spanFills: 1, includesPartial: true });
+  // Fra full tank (a) til full tank (c): 700 km, 20 + 22 = 42 l -> 0,6 l/mil
+  const c = m.get('c');
+  assert.equal(c.kind, 'measured');
+  assert.equal(c.km, 700);
+  assert.ok(Math.abs(c.litersPerMil - 0.6) < 1e-9);
+  assert.equal(c.spanFills, 2);
+  assert.equal(c.includesPartial, true);
+  assert.ok(Math.abs(measuredConsumption(fills).litersPerMil - 0.6) < 1e-9);
+});
+
+test('delfylling med km-stand brukes ikke som målepunkt', () => {
+  const fills = [
+    { id: 'a', date: '2026-01-01T12:00', odometer: 10000, liters: 45, total: 900 },
+    { id: 'b', date: '2026-01-05T12:00', odometer: 10090, liters: 20, total: 400, full: false },
+  ];
+  assert.equal(measuredConsumption(fills), null);
+  assert.equal(segmentConsumption(fills, 0.6).get('b').kind, 'partial');
+});
+
+test('delfylling før en full tank uten målepunkt teller med i estimatet', () => {
+  const m = segmentConsumption([
+    { id: 'a', date: '2026-01-01T12:00', liters: 45, total: 900 },
+    { id: 'b', date: '2026-01-05T12:00', liters: 10, total: 200, full: false },
+    { id: 'c', date: '2026-01-12T12:00', liters: 20, total: 400 },
+  ], 0.5);
+  assert.equal(m.get('c').kind, 'estimated');
+  assert.equal(m.get('c').km, 600);
+  assert.equal(m.get('c').includesPartial, true);
 });

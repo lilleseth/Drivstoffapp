@@ -253,3 +253,6 @@ details.ocr pre { white-space: pre-wrap; font-size: 12px; margin: 8px 0 0; }
 .trend.high { color: var(--warn); }
 .trend.low { color: var(--accent); }
 .seg-inline { white-space: normal; }
+
+/* Full tank-bryter (native iOS-bryter med `switch`-attributtet, ellers avkrysningsboks) */
+.field input.switch { flex: none; margin-left: auto; width: auto; padding: 0; accent-color: var(--accent); transform: scale(1.2); }
